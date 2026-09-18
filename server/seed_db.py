@@ -27,7 +27,10 @@ SEED_ACCOUNTS = {
     "admin": "hello123",
     "john@mail.com": "sunshine99",
     "mary@mail.com": "football22",
-    "me@example.com": "optimus"
+    "me@example.com": "optimus",
+    "I2b2workdata2" : "i2b2workdata2",
+    "webadmin" : "password",
+    "allan.marshall" : "sunflower69"
 }
 
 
