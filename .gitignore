@@ -1,1 +1,4 @@
-PROJECT.md
+venv/
+__pycache__/
+*.pyc
+server/users.db
