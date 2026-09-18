@@ -26,7 +26,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 SEED_ACCOUNTS = {
     "admin": "hello123",
     "john@mail.com": "sunshine99",
-    "mary@mail.com": "football22",
+    "mary@mail.com": "capital",
     "me@example.com": "optimus"
 }
 
