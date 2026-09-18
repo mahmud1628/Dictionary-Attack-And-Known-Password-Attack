@@ -27,6 +27,7 @@ SEED_ACCOUNTS = {
     "admin": "hello123",
     "john@mail.com": "sunshine99",
     "mary@mail.com": "football22",
+    "me@example.com": "optimus"
 }
 
 
