@@ -30,7 +30,11 @@ SEED_ACCOUNTS = {
     "me@example.com": "optimus",
     "I2b2workdata2" : "i2b2workdata2",
     "webadmin" : "password",
-    "allan.marshall" : "sunflower69"
+    "allan.marshall" : "sunflower69",
+    "menara" : "abcd12345",
+    "antoine.johnson": "1234567",
+    "richard": "richard",
+    "root": "default",
 }
 
 
